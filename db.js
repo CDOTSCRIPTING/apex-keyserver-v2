@@ -7,17 +7,15 @@ db.exec(`
     key TEXT UNIQUE,
     type TEXT,
     hwid TEXT,
+    username TEXT,
     expires_at INTEGER,
     created_at INTEGER,
     banned INTEGER DEFAULT 0
   );
 `);
 
-// Migrate existing table if it lacks the banned column
-try {
-  db.exec("ALTER TABLE keys ADD COLUMN banned INTEGER DEFAULT 0");
-} catch (e) {
-  // Column already exists
-}
+// Migrate existing table
+try { db.exec("ALTER TABLE keys ADD COLUMN banned INTEGER DEFAULT 0"); } catch (e) {}
+try { db.exec("ALTER TABLE keys ADD COLUMN username TEXT"); } catch (e) {}
 
 module.exports = db;

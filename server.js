@@ -10,9 +10,8 @@ app.use(cors());
 
 const API_SECRET = "Summer98$";
 
-// 1. VALIDATION ENDPOINT
 app.post('/validate', (req, res) => {
-    const { key, hwid } = req.body;
+    const { key, hwid, username } = req.body;
     if (!key || !hwid) return res.status(400).json({ valid: false, error: "Missing parameters" });
 
     const row = db.prepare('SELECT * FROM keys WHERE key = ?').get(key);
@@ -21,37 +20,37 @@ app.post('/validate', (req, res) => {
     if (row.banned) return res.json({ valid: false, error: "Key is banned" });
     if (row.expires_at && Date.now() > row.expires_at) return res.json({ valid: false, error: "Key expired" });
     
+    const userStr = username || "Unknown";
+
     if (!row.hwid) {
-        db.prepare('UPDATE keys SET hwid = ? WHERE id = ?').run(hwid, row.id);
+        db.prepare('UPDATE keys SET hwid = ?, username = ? WHERE id = ?').run(hwid, userStr, row.id);
         return res.json({ valid: true, type: row.type, message: "HWID locked to this device" });
     } else if (row.hwid !== hwid) {
         return res.json({ valid: false, error: "Key locked to another device" });
+    } else {
+        // Update username if it changed
+        if (row.username !== userStr) {
+            db.prepare('UPDATE keys SET username = ? WHERE id = ?').run(userStr, row.id);
+        }
     }
 
     return res.json({ valid: true, type: row.type });
 });
 
-// 2. WEBHOOK ENDPOINT
 app.post('/webhook', (req, res) => {
     const { secret, product_type } = req.body; 
     if (secret !== API_SECRET) return res.status(401).send("Unauthorized");
 
     const newKey = `APEX-${crypto.randomBytes(4).toString('hex').toUpperCase()}-${crypto.randomBytes(4).toString('hex').toUpperCase()}`;
     const id = uuidv4();
-    
-    let expires_at = null;
-    if (product_type === "weekly") {
-        expires_at = Date.now() + (7 * 24 * 60 * 60 * 1000); 
-    }
+    let expires_at = product_type === "weekly" ? Date.now() + (7 * 24 * 60 * 60 * 1000) : null;
 
     db.prepare('INSERT INTO keys (id, key, type, expires_at, created_at) VALUES (?, ?, ?, ?, ?)')
       .run(id, newKey, product_type, expires_at, Date.now());
 
-    console.log(`Generated Key: ${newKey} (${product_type})`);
     res.status(200).json({ key: newKey });
 });
 
-// 3. ADMIN GENERATE ENDPOINT
 app.post('/admin/generate', (req, res) => {
     const { auth, type } = req.body;
     if (auth !== API_SECRET) return res.status(401).send("Unauthorized");
@@ -66,11 +65,9 @@ app.post('/admin/generate', (req, res) => {
     res.json({ key: newKey, type, expires_at });
 });
 
-// 4. ADMIN BAN/DELETE ENDPOINTS
 app.put('/admin/keys/:key/ban', (req, res) => {
     const { auth } = req.body;
     if (auth !== API_SECRET) return res.status(401).json({ error: "Unauthorized" });
-    
     db.prepare('UPDATE keys SET banned = 1 WHERE key = ?').run(req.params.key);
     res.json({ success: true });
 });
@@ -78,12 +75,10 @@ app.put('/admin/keys/:key/ban', (req, res) => {
 app.delete('/admin/keys/:key', (req, res) => {
     const { auth } = req.body;
     if (auth !== API_SECRET) return res.status(401).json({ error: "Unauthorized" });
-    
     db.prepare('DELETE FROM keys WHERE key = ?').run(req.params.key);
     res.json({ success: true });
 });
 
-// 5. WEB ADMIN PANEL UI
 app.get('/admin', (req, res) => {
     res.send(`
     <!DOCTYPE html>
@@ -114,7 +109,7 @@ app.get('/admin', (req, res) => {
         </div>
         <p id="status" style="color: #ff3232;"></p>
         <table id="keyTable">
-            <tr><th>Key</th><th>Type</th><th>HWID</th><th>Expires</th><th>Status</th><th>Actions</th></tr>
+            <tr><th>Key</th><th>Type</th><th>User</th><th>HWID</th><th>Expires</th><th>Status</th><th>Actions</th></tr>
         </table>
         <script>
             async function genKey() {
@@ -134,17 +129,18 @@ app.get('/admin', (req, res) => {
                 const res = await fetch('/admin/keys?auth=' + encodeURIComponent(auth));
                 const data = await res.json();
                 const table = document.getElementById('keyTable');
-                table.innerHTML = '<tr><th>Key</th><th>Type</th><th>HWID</th><th>Expires</th><th>Status</th><th>Actions</th></tr>';
+                table.innerHTML = '<tr><th>Key</th><th>Type</th><th>User</th><th>HWID</th><th>Expires</th><th>Status</th><th>Actions</th></tr>';
                 (data.keys || []).forEach(k => {
                     const row = table.insertRow();
                     row.insertCell(0).innerText = k.key;
                     row.insertCell(1).innerText = k.type;
-                    row.insertCell(2).innerText = k.hwid || '—';
-                    row.insertCell(3).innerText = k.expires_at ? new Date(k.expires_at).toLocaleDateString() : 'Never';
-                    row.insertCell(4).innerText = k.banned ? 'BANNED' : 'Active';
-                    row.insertCell(4).style.color = k.banned ? '#ff3232' : '#32cd32';
+                    row.insertCell(2).innerText = k.username || '—';
+                    row.insertCell(3).innerText = k.hwid || '—';
+                    row.insertCell(4).innerText = k.expires_at ? new Date(k.expires_at).toLocaleDateString() : 'Never';
+                    row.insertCell(5).innerText = k.banned ? 'BANNED' : 'Active';
+                    row.insertCell(5).style.color = k.banned ? '#ff3232' : '#32cd32';
                     
-                    const actionsCell = row.insertCell(5);
+                    const actionsCell = row.insertCell(6);
                     
                     if (!k.banned) {
                         const banBtn = document.createElement('button');
@@ -185,11 +181,10 @@ app.get('/admin', (req, res) => {
     `);
 });
 
-// 6. ADMIN LIST ENDPOINT
 app.get('/admin/keys', (req, res) => {
     const { auth } = req.query;
     if (auth !== API_SECRET) return res.status(401).json({ error: "Unauthorized" });
-    const rows = db.prepare('SELECT key, type, hwid, expires_at, banned FROM keys').all();
+    const rows = db.prepare('SELECT key, type, username, hwid, expires_at, banned FROM keys').all();
     res.json({ keys: rows });
 });
 
