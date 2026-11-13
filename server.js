@@ -7,7 +7,7 @@ const app = express();
 app.use(express.json());
 app.use(cors());
 
-const API_SECRET = "Summer98$";
+const API_SECRET = "ApexAdmin123";
 const MONGODB_URI = "mongodb+srv://<apexuser>:<admin>@cluster0.q2nbpeu.mongodb.net/";
 
 const KeySchema = new mongoose.Schema({
