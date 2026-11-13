@@ -7,8 +7,8 @@ const app = express();
 app.use(express.json());
 app.use(cors());
 
-const API_SECRET = "ApexAdmin123";
-const MONGODB_URI = "mongodb+srv://<apexuser>:<admin>@cluster0.q2nbpeu.mongodb.net/";
+const API_SECRET = "admin";
+const MONGODB_URI = process.env.MONGODB_URI || "mongodb+srv://apexuser:admin@cluster0.q2nbpeu.mongodb.net/?retryWrites=true&w=majority";
 
 const KeySchema = new mongoose.Schema({
     key: { type: String, unique: true, required: true },
