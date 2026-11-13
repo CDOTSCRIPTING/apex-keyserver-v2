@@ -8,7 +8,7 @@ const app = express();
 app.use(express.json());
 app.use(cors());
 
-const API_SECRET = "YourSecureSecret123!";
+const API_SECRET = "Summer98$";
 
 // 1. VALIDATION ENDPOINT
 app.post('/validate', (req, res) => {
