@@ -23,6 +23,31 @@ const KeyModel = mongoose.model('Key', KeySchema);
 
 mongoose.connect(MONGODB_URI).then(() => console.log("[SYSTEM] Connected to MongoDB")).catch(err => console.error(err));
 
+// ==========================================
+// APEX ONLINE USERS (HEARTBEAT SYSTEM)
+// ==========================================
+const onlineUsers = {};
+
+app.post('/heartbeat', (req, res) => {
+    const { userId } = req.body;
+    if (userId) onlineUsers[userId] = Date.now(); 
+    res.status(200).json({ success: true });
+});
+
+app.get('/online', (req, res) => {
+    const now = Date.now();
+    const activeIds = [];
+    for (const id in onlineUsers) {
+        if (now - onlineUsers[id] > 45000) {
+            delete onlineUsers[id];
+        } else {
+            activeIds.push(id);
+        }
+    }
+    res.status(200).json({ online: activeIds });
+});
+// ==========================================
+
 app.post('/validate', async (req, res) => {
     try {
         const { key, hwid, username } = req.body;
@@ -111,7 +136,7 @@ app.get('/admin', (req, res) => {
                 (data.keys || []).forEach(k => {
                     const row = table.insertRow();
                     row.insertCell(0).innerText = k.key; row.insertCell(1).innerText = k.type;
-                    row.insertCell(2).innerText = k.username || '—'; row.insertCell(3).innerText = k.hwid || '—';
+                    row.insertCell(2).innerText = k.username || 'â€”'; row.insertCell(3).innerText = k.hwid || 'â€”';
                     row.insertCell(4).innerText = k.expires_at ? new Date(k.expires_at).toLocaleDateString() : 'Never';
                     row.insertCell(5).innerText = k.banned ? 'BANNED' : 'Active';
                     row.insertCell(5).style.color = k.banned ? '#ff3232' : '#32cd32';
