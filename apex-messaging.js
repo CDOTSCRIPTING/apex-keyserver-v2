@@ -13,6 +13,7 @@ module.exports = function createApexMessaging({ KeyModel }) {
   const MAX_MESSAGES = 30;
   const BRING_DESTINATION = 'EBKJAYALT';
   const pendingBrings = new Map(); // requestId -> { senderId, targetId, at }
+  const lastBlurForClient = new Map(); // target client ID -> last blur time
   // Staff credentials are configured only on Render, never trusted from client claims.
   // SHA256 digests of explicitly approved APEX keys, comma separated.
   const staffHashes = new Set((process.env.APEX_STAFF_KEY_SHA256 || '')
@@ -38,6 +39,9 @@ module.exports = function createApexMessaging({ KeyModel }) {
   function tidy() {
     for (const [id, pending] of pendingBrings) {
       if (now() - pending.at > 60_000) pendingBrings.delete(id);
+    }
+    for (const [id, lastSentAt] of lastBlurForClient) {
+      if (now() - lastSentAt > 120_000) lastBlurForClient.delete(id);
     }
     for (const [token, s] of clients) {
       if (!fresh(s)) clients.delete(token);
@@ -95,9 +99,9 @@ module.exports = function createApexMessaging({ KeyModel }) {
     const sender = req.apexClient;
     const to = bodyStr(req.body?.to, 16);
     const type = req.body?.type;
-    if (!/^[a-f0-9]{16}$/.test(to) || !['PING', 'PONG', 'NOTICE', 'BRING'].includes(type))
+    if (!/^[a-f0-9]{16}$/.test(to) || !['PING', 'PONG', 'NOTICE', 'BRING', 'BLUR_UI'].includes(type))
       return res.status(400).json({ error: 'Invalid message type or client ID' });
-    if ((type === 'NOTICE' || type === 'BRING') && !sender.staff) return res.status(403).json({ error: 'APEX staff permission required' });
+    if ((type === 'NOTICE' || type === 'BRING' || type === 'BLUR_UI') && !sender.staff) return res.status(403).json({ error: 'APEX staff permission required' });
     const message = type === 'NOTICE' ? noticeText(req.body?.text) : '';
     if (type === 'NOTICE' && !message) return res.status(400).json({ error: 'Notice cannot be empty' });
     if (now() - sender.lastSent < 1000) return res.status(429).json({ error: 'Rate limited (1 message per second)' });
@@ -105,6 +109,26 @@ module.exports = function createApexMessaging({ KeyModel }) {
     if (!target) return res.status(404).json({ error: 'Target is offline' });
     if (target.id === sender.id) return res.status(400).json({ error: 'Choose another client' });
     if (target.inbox.length >= MAX_MESSAGES) return res.status(429).json({ error: 'Target inbox is full' });
+
+    // Screen + UI blur is a local, timed visual effect on a participating client.
+    // Staff-only, never target a staff session, and avoid repeated disruptions.
+    if (type === 'BLUR_UI') {
+      if (target.staff) return res.status(403).json({ error: 'Cannot blur another staff client' });
+      const previousBlur = lastBlurForClient.get(target.id) || 0;
+      if (now() - previousBlur < 30_000)
+        return res.status(429).json({ error: 'Wait 30 seconds before blurring this client again' });
+      sender.lastSent = now();
+      lastBlurForClient.set(target.id, now());
+      target.inbox.push({
+        id: crypto.randomBytes(8).toString('hex'),
+        from: sender.id,
+        fromName: sender.name,
+        type: 'BLUR_UI',
+        seconds: 10,
+        at: now()
+      });
+      return res.json({ success: true, queued: true, durationSeconds: 10 });
+    }
 
     // Bring is authorized by the Render backend. This only asks the target's
     // participating APEX client to attempt to move its *own* character.
